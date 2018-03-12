@@ -17,3 +17,6 @@ tlib/debug
 
 # Ignore the generated pcap files (Qemu)
 *.pcap
+
+# Ignore Mac OS X hidden system files
+.DS_Store

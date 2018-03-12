@@ -3,10 +3,10 @@ default: all
 .PHONY: all clean
 
 stage1.bin: stage1.asm
-	nasm -w+all -f bin -o stage1.bin stage1.asm
+	nasm -f bin -o stage1.bin stage1.asm
 
 stage2.bin: stage2.asm
-	nasm -w+all -f bin -o stage2.bin stage2.asm
+	nasm -O1 -f bin -o stage2.bin stage2.asm
 
 all: stage1.bin stage2.bin
 

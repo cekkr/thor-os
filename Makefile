@@ -114,3 +114,4 @@ clean:
 	cd tlib/; $(MAKE) clean
 	rm -f *.bin
 	rm -f *.flp
+	rm -r -f external

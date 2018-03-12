@@ -11,6 +11,7 @@ programs/*/debug
 programs/dist/
 tstl/debug
 tlib/debug
+external
 
 # Ignore the generated log (Qemu)
 *.log

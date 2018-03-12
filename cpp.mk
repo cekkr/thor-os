@@ -7,8 +7,12 @@ AR=x86_64-elf-ar
 WARNING_FLAGS=-Wall -Wextra -pedantic -Wold-style-cast
 COMMON_C_FLAGS=-masm=intel -I../../tstl/include/ -I../printf/include/ -I../tstl/include/ -I../tlib/include/ -Iinclude/ -nostdlib -g -Os -fno-stack-protector -fno-exceptions -funsigned-char -ffreestanding -fomit-frame-pointer -mno-red-zone -mno-3dnow -mno-mmx -fno-asynchronous-unwind-tables
 
+# Current directory 
+mkfile_path := $(abspath $(lastword $(MAKEFILE_LIST)))
+current_dir := $(dir $(mkfile_path))
+
 # Include ACPICA
-COMMON_C_FLAGS += -isystem acpica/source/include
+COMMON_C_FLAGS += -isystem $(current_dir)/external/acpica/source/include
 
 # Add more flags for C++
 COMMON_CPP_FLAGS=$(COMMON_C_FLAGS) -std=c++11 -fno-rtti

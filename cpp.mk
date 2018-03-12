@@ -12,7 +12,7 @@ mkfile_path := $(abspath $(lastword $(MAKEFILE_LIST)))
 current_dir := $(dir $(mkfile_path))
 
 # Include ACPICA
-COMMON_C_FLAGS += -isystem $(current_dir)/external/acpica/source/include
+COMMON_C_FLAGS += -isystem $(current_dir)external/acpica/source/include
 
 # Add more flags for C++
 COMMON_CPP_FLAGS=$(COMMON_C_FLAGS) -std=c++11 -fno-rtti
@@ -68,14 +68,17 @@ endef
 # Generate the rules for the CPP files of a directory
 define compile_cpp_folder
 
+orig_makefile := $(abspath $(wordlist $(words $(MAKEFILE_LIST)),$(words $(MAKEFILE_LIST)), x $(MAKEFILE_LIST)))
+orig_makedir := $(dir $(orig_makefile))
+
 debug/$(1)/%.cpp.d: $(1)/%.cpp
-	@ mkdir -p debug/$(1)/
-	@ $(CXX) $(KERNEL_CPP_FLAGS_64) $(THOR_FLAGS) $(WARNING_FLAGS) -MM -MT debug/$(1)/$$*.cpp.o $$< | sed -e 's@^\(.*\)\.o:@\1.d \1.o:@' > $$@
+	@ mkdir -p $$(orig_makedir)$$(dir $$@)
+	@ $(CXX) $(KERNEL_CPP_FLAGS_64) $(THOR_FLAGS) $(WARNING_FLAGS) -MM -MT $$(orig_makedir)debug/$(1)/$$*.cpp.o $$< | sed -e 's@^\(.*\)\.o:@\1.d \1.o:@' > $$(orig_makedir)$$@
 
 debug/$(1)/%.cpp.o: $(1)/%.cpp
-	@ mkdir -p debug/$(1)/
+	@ mkdir -p $$(orig_makedir)$$(dir $$@)
 	@ echo -e "$(MODE_COLOR)[debug]$(NO_COLOR) Compile $(FILE_COLOR)$(1)/$$*.cpp$(NO_COLOR)"
-	@ $(CXX) $(KERNEL_CPP_FLAGS_64) $(THOR_FLAGS) $(WARNING_FLAGS) -c $$< -o $$@
+	@ $(CXX) $(KERNEL_CPP_FLAGS_64) $(THOR_FLAGS) $(WARNING_FLAGS) -c $$< -o $$(orig_makedir)$$@
 
 folder_cpp_files := $(wildcard $(1)/*.cpp)
 folder_d_files   := $$(folder_cpp_files:%.cpp=debug/%.cpp.d)

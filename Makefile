@@ -23,8 +23,8 @@ programs: force_look tlib/debug/libtlib.a
 compile: bootloader/stage1.bin bootloader/stage2.bin init/debug/init.bin kernel/debug/kernel.bin programs
 
 hdd.img:
-	dd if=/dev/zero of=hdd.img bs=516096c count=1000
-	(echo n; echo p; echo 1; echo ""; echo ""; echo t; echo c; echo a; echo 1; echo w;) | sudo fdisk -u -C1000 -S63 -H16 hdd.img
+	dd if=/dev/zero of=hdd.img bs=516096 count=1000
+	(echo n; echo p; echo 1; echo ""; echo ""; echo t; echo c; echo a; echo 1; echo w;) | sudo fdisk -u -c 1000 -s 63 -h 16 hdd.img
 
 thor.flp: hdd.img bootloader/stage1.bin bootloader/stage2.bin init/debug/init.bin kernel/debug/kernel.bin programs
 	mkdir -p mnt/fake/

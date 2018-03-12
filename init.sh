@@ -4,6 +4,8 @@ if [ ! -d "external" ]; then
 fi
 
 if [ ! -d "external/acpica" ]; then
-  git clone https://github.com/acpica/acpica.git
+	cd external
+	git clone https://github.com/acpica/acpica.git
+	cd ../
 fi
 

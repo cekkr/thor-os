@@ -12,7 +12,7 @@ mkfile_path := $(abspath $(lastword $(MAKEFILE_LIST)))
 current_dir := $(dir $(mkfile_path))
 
 # Include ACPICA
-COMMON_C_FLAGS += -isystem $(current_dir)external/acpica/source/include
+COMMON_C_FLAGS += -isystem $(current_dir)kernel/acpica/source/include
 
 # Add more flags for C++
 COMMON_CPP_FLAGS=$(COMMON_C_FLAGS) -std=c++11 -fno-rtti

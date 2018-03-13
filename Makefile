@@ -2,6 +2,8 @@
 
 default: thor.flp
 
+detected_OS := $(shell sh -c 'uname -s 2>/dev/null || echo not')
+
 kernel/debug/kernel.bin: force_look
 	cd kernel; $(MAKE)
 
@@ -26,6 +28,33 @@ hdd.img:
 	dd if=/dev/zero of=hdd.img bs=516096 count=1000
 	(echo n; echo p; echo 1; echo ""; echo ""; echo t; echo c; echo a; echo 1; echo w;) | sudo fdisk -u -c 1000 -s 63 -h 16 hdd.img
 
+VOLUME_NAME := THOROS
+VOLUME_PATH := /Volumes/$(VOLUME_NAME)
+
+ifeq ($(detected_OS), Darwin) 
+
+# It's a Mac!
+thor.flp: hdd.img bootloader/stage1.bin bootloader/stage2.bin init/debug/init.bin kernel/debug/kernel.bin programs
+	mkdir -p mnt/fake/
+	dd if=bootloader/stage1.bin of=hdd.img conv=notrunc
+	dd if=bootloader/stage2.bin of=hdd.img seek=1 conv=notrunc
+	$(eval ATTACHED_AT = $(word 1, $(shell sudo hdiutil attach -nomount hdd.img)))
+	@ echo Attached at $(ATTACHED_AT)
+	diskutil eraseDisk FAT32 $(VOLUME_NAME) $(ATTACHED_AT)
+	diskutil mountDisk $(ATTACHED_AT)
+	sudo mkdir $(VOLUME_PATH)/bin/
+	sudo mkdir $(VOLUME_PATH)/sys/
+	sudo mkdir $(VOLUME_PATH)/dev/
+	sudo mkdir $(VOLUME_PATH)/proc/
+	sudo /bin/cp init/debug/init.bin $(VOLUME_PATH)
+	sudo /bin/cp kernel/debug/kernel.bin $(VOLUME_PATH)
+	sudo /bin/cp programs/dist/* $(VOLUME_PATH)/bin/
+	sleep 0.1
+	sudo hdiutil detach $(ATTACHED_AT)
+	
+else
+
+# It's Linux!
 thor.flp: hdd.img bootloader/stage1.bin bootloader/stage2.bin init/debug/init.bin kernel/debug/kernel.bin programs
 	mkdir -p mnt/fake/
 	dd if=bootloader/stage1.bin of=hdd.img conv=notrunc
@@ -43,6 +72,8 @@ thor.flp: hdd.img bootloader/stage1.bin bootloader/stage2.bin init/debug/init.bi
 	sleep 0.1
 	sudo /bin/umount mnt/fake/
 	sudo /sbin/losetup -d /dev/loop0
+	
+endif
 
 qemu: default
 	touch virtual.log

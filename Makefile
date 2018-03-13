@@ -24,9 +24,19 @@ programs: force_look tlib/debug/libtlib.a
 
 compile: bootloader/stage1.bin bootloader/stage2.bin init/debug/init.bin kernel/debug/kernel.bin programs
 
+ifeq ($(detected_OS), Darwin) 
+
 hdd.img:
-	dd if=/dev/zero of=hdd.img bs=516096 count=1000
-	(echo n; echo p; echo 1; echo ""; echo ""; echo t; echo c; echo a; echo 1; echo w;) | sudo fdisk -u -c 1000 -s 63 -h 16 hdd.img
+	dd if=/dev/zero of=hdd.img bs=4096 count=65536
+	(echo n; echo p; echo 1; echo ""; echo ""; echo t; echo c; echo a; echo 1; echo w;) | sudo fdisk -u -y -c 1000 -s 63 -h 16 -b 4096 hdd.img
+
+else
+
+hdd.img:
+	dd if=/dev/zero of=hdd.img bs=516096c count=1000
+	(echo n; echo p; echo 1; echo ""; echo ""; echo t; echo c; echo a; echo 1; echo w;) | sudo fdisk -u -C1000 -S63 -H16 hdd.img
+
+endif
 
 VOLUME_NAME := THOROS
 VOLUME_PATH := /Volumes/$(VOLUME_NAME)
@@ -38,9 +48,11 @@ thor.flp: hdd.img bootloader/stage1.bin bootloader/stage2.bin init/debug/init.bi
 	mkdir -p mnt/fake/
 	dd if=bootloader/stage1.bin of=hdd.img conv=notrunc
 	dd if=bootloader/stage2.bin of=hdd.img seek=1 conv=notrunc
-	$(eval ATTACHED_AT = $(word 1, $(shell sudo hdiutil attach -nomount hdd.img)))
+	$(eval ATTACHED_AT = $(word 1, $(shell sudo hdiutil attach -nomount hdd.img -section 2)))
 	@ echo Attached at $(ATTACHED_AT)
-	diskutil eraseDisk FAT32 $(VOLUME_NAME) $(ATTACHED_AT)
+	#sudo newfs_msdos -F 32 -v $(VOLUME_NAME) -c 1 $(ATTACHED_AT)
+	diskutil partitionDisk $(ATTACHED_AT) MBRFormat "MS-DOS FAT32" $(VOLUME_NAME) 100%
+	#diskutil eraseDisk FAT32 $(VOLUME_NAME) MBRFormat $(ATTACHED_AT)
 	diskutil mountDisk $(ATTACHED_AT)
 	sudo mkdir $(VOLUME_PATH)/bin/
 	sudo mkdir $(VOLUME_PATH)/sys/
@@ -50,7 +62,8 @@ thor.flp: hdd.img bootloader/stage1.bin bootloader/stage2.bin init/debug/init.bi
 	sudo /bin/cp kernel/debug/kernel.bin $(VOLUME_PATH)
 	sudo /bin/cp programs/dist/* $(VOLUME_PATH)/bin/
 	sleep 0.1
-	sudo hdiutil detach $(ATTACHED_AT)
+	hdiutil detach $(ATTACHED_AT)
+	#hdiutil convert hdd.img -format UDTO -o thoros.iso
 	
 else
 

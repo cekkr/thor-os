@@ -58,8 +58,6 @@ pcb_t pcb;
 //Define one run queue for each priority level
 std::array<std::vector<scheduler::pid_t>, scheduler::PRIORITY_LEVELS> run_queues;
 
-int_lock queue_lock;
-
 volatile bool started = false;
 
 volatile size_t rr_quantum = 0;
@@ -70,6 +68,7 @@ volatile size_t next_pid = 0;
 size_t gc_pid = 0;
 size_t idle_pid = 0;
 size_t init_pid = 0;
+size_t post_init_pid = 0;
 
 std::vector<scheduler::pid_t>& run_queue(size_t priority){
     return run_queues[priority - scheduler::MIN_PRIORITY];
@@ -152,7 +151,8 @@ void gc_task(){
                 // 5. Remove process from run queue
 
                 {
-                    std::lock_guard<int_lock> l(queue_lock);
+                    // Move only write to the list with a lock
+                    direct_int_lock queue_lock;
 
                     for(size_t index = 0; index < run_queue(desc.priority).size(); ++index){
                         if(run_queue(desc.priority)[index] == desc.pid){
@@ -290,7 +290,8 @@ void queue_process(scheduler::pid_t pid){
 
     process.state = scheduler::process_state::READY;
 
-    std::lock_guard<int_lock> l(queue_lock);
+    // Move only write to the list with a lock
+    direct_int_lock queue_lock;
     run_queue(process.process.priority).push_back(pid);
 }
 
@@ -303,6 +304,8 @@ void create_idle_task(){
     scheduler::queue_system_process(idle_process.pid);
 
     idle_pid = idle_process.pid;
+
+    logging::logf(logging::log_level::DEBUG, "scheduler: idle_task %u \n", idle_pid);
 }
 
 void create_init_tasks(){
@@ -335,37 +338,49 @@ void create_init_tasks(){
 void create_gc_task(){
     auto& gc_process = scheduler::create_kernel_task("gc", new char[scheduler::user_stack_size], new char[scheduler::kernel_stack_size], &gc_task);
 
-    gc_process.ppid = 1;
+    gc_process.ppid = 0;
     gc_process.priority = scheduler::MIN_PRIORITY + 1;
 
     scheduler::queue_system_process(gc_process.pid);
 
     gc_pid = gc_process.pid;
+
+    logging::logf(logging::log_level::DEBUG, "scheduler: gc_task %u \n", gc_pid);
 }
 
 void create_post_init_task(){
     auto& post_init_process = scheduler::create_kernel_task("post_init", new char[scheduler::user_stack_size], new char[scheduler::kernel_stack_size], &post_init_task);
 
-    post_init_process.ppid = 1;
+    post_init_process.ppid = 0;
     post_init_process.priority = scheduler::MAX_PRIORITY;
 
-    scheduler::queue_system_process(post_init_process.pid);
+    post_init_pid = post_init_process.pid;
+
+    scheduler::queue_system_process(post_init_pid);
+
+    logging::logf(logging::log_level::DEBUG, "scheduler: post_init_task %u \n", post_init_pid);
 }
 
-void switch_to_process(size_t pid){
-    if(pcb[current_pid].process.system){
-        verbose_logf(logging::log_level::DEBUG, "scheduler: Switch from %u (s:%u) to %u (rip:%u)\n", current_pid, static_cast<size_t>(pcb[current_pid].state), pid, pcb[current_pid].process.context->rip);
+void switch_to_process_with_lock(size_t new_pid){
+    if (pcb[current_pid].process.system) {
+        verbose_logf(logging::log_level::DEBUG, "scheduler: Switch from %u (s:%u) to %u (rip:%u)\n",
+                     current_pid, static_cast<size_t>(pcb[current_pid].state), new_pid, pcb[current_pid].process.context->rip);
     } else {
-        verbose_logf(logging::log_level::DEBUG, "scheduler: Switch from %u (s:%u) to %u\n", current_pid, static_cast<size_t>(pcb[current_pid].state), pid);
+        verbose_logf(logging::log_level::DEBUG, "scheduler: Switch from %u (s:%u) to %u\n",
+                     current_pid, static_cast<size_t>(pcb[current_pid].state), new_pid);
     }
 
-    // This should never be interrupted
-    direct_int_lock l;
-
     auto old_pid = current_pid;
-    current_pid = pid;
 
-    auto& process = pcb[pid];
+    // It is possible that preemption occured and that the process is already
+    // running, in which case, there is no need to do anything
+    if(old_pid == new_pid){
+        return;
+    }
+
+    current_pid = new_pid;
+
+    auto& process = pcb[new_pid];
     process.state = scheduler::process_state::RUNNING;
 
     gdt::tss().rsp0_low = process.process.kernel_rsp & 0xFFFFFFFF;
@@ -374,10 +389,20 @@ void switch_to_process(size_t pid){
     task_switch(old_pid, current_pid);
 }
 
-size_t select_next_process(){
-    auto current_priority = pcb[current_pid].process.priority;
+void switch_to_process(size_t new_pid){
+    // This should never be interrupted
+    direct_int_lock l;
 
-    std::lock_guard<int_lock> l(queue_lock);
+    switch_to_process_with_lock(new_pid);
+}
+
+/*!
+ * \brief Select the next process to run.
+ *
+ * This function assume that an int_lock is already owned.
+ */
+size_t select_next_process_with_lock(){
+    auto current_priority = pcb[current_pid].process.priority;
 
     //1. Run a process of higher priority, if any
     for(size_t p = scheduler::MAX_PRIORITY; p > current_priority; --p){
@@ -424,6 +449,13 @@ size_t select_next_process(){
     }
 
     thor_unreachable("No process is READY");
+}
+
+size_t select_next_process(){
+    // Cannot be interrupted
+    direct_int_lock lock;
+
+    return select_next_process_with_lock();
 }
 
 bool allocate_user_memory(scheduler::process_t& process, size_t address, size_t size, size_t& ref){
@@ -663,8 +695,11 @@ void scheduler::init(){
 }
 
 void scheduler::start(){
-    //Run the init task by default
-    current_pid = init_pid;
+    // TODO The current_pid should be set dynamically to the task in the list
+    // with highest priority
+
+    //Run the post init task by default (maximum priority)
+    current_pid = post_init_pid;
     pcb[current_pid].state = scheduler::process_state::RUNNING;
 
     started = true;
@@ -846,17 +881,24 @@ void scheduler::tick(){
     if(process.rounds == rr_quantum){
         process.rounds = 0;
 
-        process.state = process_state::READY;
+        auto previous_state = process.state;
+
+        // Change to Ready if it was not blocked
+        // If it was blocked, we still prempt and it will end up in reschedule
+        // later but with a full time quanta
+        if(previous_state != process_state::BLOCKED && previous_state != process_state::BLOCKED_TIMEOUT){
+            process.state = process_state::READY;
+        }
 
         auto pid = select_next_process();
 
         //If it is the same, no need to go to the switching process
         if(pid == current_pid){
-            process.state = process_state::RUNNING;
+            process.state = previous_state;
             return;
         }
 
-        verbose_logf(logging::log_level::DEBUG, "scheduler: Preempt %u to %u\n", current_pid, pid);
+        verbose_logf(logging::log_level::DEBUG, "scheduler: Preempt %u (%d->%d) to %u\n", current_pid, previous_state, process.state, pid);
 
         switch_to_process(pid);
     } else {
@@ -868,14 +910,16 @@ void scheduler::tick(){
 
 void scheduler::yield(){
     thor_assert(started, "No interest in yielding before start");
+    thor_assert(pcb[current_pid].state == process_state::RUNNING, "Can only yield() running processes");
 
     pcb[current_pid].state = process_state::READY;
 
-    auto pid = select_next_process();
+    direct_int_lock lock;
+
+    auto pid = select_next_process_with_lock();
 
     if(pid != current_pid){
-        verbose_logf(logging::log_level::DEBUG, "scheduler: Yields %u to %u\n", current_pid, pid);
-        switch_to_process(pid);
+        switch_to_process_with_lock(pid);
     } else {
         pcb[current_pid].state = process_state::RUNNING;
     }
@@ -888,9 +932,11 @@ void scheduler::reschedule(){
 
     //The process just got blocked or put to sleep, choose another one
     if(process.state != process_state::RUNNING){
-        auto index = select_next_process();
+        direct_int_lock lock;
 
-        switch_to_process(index);
+        auto index = select_next_process_with_lock();
+
+        switch_to_process_with_lock(index);
     }
 
     //At this point we just have to return to the current process

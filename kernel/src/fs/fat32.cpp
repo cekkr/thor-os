@@ -18,6 +18,12 @@
 #include "console.hpp"
 #include "logging.hpp"
 
+#ifdef THOR_CONFIG_FAT32_VERBOSE
+#define verbose_logf(...) logging::logf(__VA_ARGS__)
+#else
+#define verbose_logf(...)
+#endif
+
 namespace {
 
 constexpr const uint32_t CLUSTER_FREE = 0x0;
@@ -224,9 +230,12 @@ size_t fat32::fat32_file_system::get_file(const path& file_path, vfs::file& file
 }
 
 size_t fat32::fat32_file_system::read(const path& file_path, char* buffer, size_t count, size_t offset, size_t& read){
+    verbose_logf(logging::log_level::TRACE, "fat32: Start read (buffer=%p,count=%d,offset=%d)\n", buffer, count, offset);
+
     vfs::file file;
     auto result = get_file(file_path, file);
     if(result > 0){
+        verbose_logf(logging::log_level::TRACE, "fat32: invalid file\n");
         return result;
     }
 
@@ -235,11 +244,13 @@ size_t fat32::fat32_file_system::read(const path& file_path, char* buffer, size_
 
     //Check the offset parameter
     if(offset > file_size){
+        verbose_logf(logging::log_level::TRACE, "fat32: invalid offset\n");
         return std::ERROR_INVALID_OFFSET;
     }
 
     //No need to read the cluster if there are no content
     if(file_size == 0 || count == 0){
+        verbose_logf(logging::log_level::TRACE, "fat32: nothing to read\n");
         read = 0;
         return 0;
     }
@@ -253,11 +264,14 @@ size_t fat32::fat32_file_system::read(const path& file_path, char* buffer, size_
 
     size_t cluster_size = 512 * fat_bs->sectors_per_cluster;
 
+    // Allocate a buffer big enough to read one cluster (possibly several sectors)
+    std::unique_heap_array<char> cluster_buffer(cluster_size);
+
     while(read_bytes < last){
         auto cluster_last = (cluster + 1) * cluster_size;
 
         if(first < cluster_last){
-            std::unique_heap_array<char> cluster_buffer(cluster_size);
+            verbose_logf(logging::log_level::TRACE, "fat32: read_sectors\n");
 
             if(read_sectors(cluster_lba(cluster_number), fat_bs->sectors_per_cluster, cluster_buffer.get())){
                 size_t i = 0;
@@ -270,6 +284,8 @@ size_t fat32::fat32_file_system::read(const path& file_path, char* buffer, size_
                     buffer[position++] = cluster_buffer[i];
                 }
             } else {
+                verbose_logf(logging::log_level::TRACE, "fat32: read failed\n");
+
                 return std::ERROR_FAILED;
             }
         } else {
@@ -295,6 +311,8 @@ size_t fat32::fat32_file_system::read(const path& file_path, char* buffer, size_
     }
 
     read = last - first;
+
+    verbose_logf(logging::log_level::TRACE, "fat32: finished read\n");
 
     return 0;
 }
@@ -335,13 +353,15 @@ size_t fat32::fat32_file_system::write(const path& file_path, const char* buffer
 
     size_t cluster_size = 512 * fat_bs->sectors_per_cluster;
 
+    // Allocate a buffer big enough to read one cluster (possibly several sectors)
+    std::unique_heap_array<char> cluster_buffer(cluster_size);
+
     while(read_bytes < last){
         auto cluster_last = (cluster + 1) * cluster_size;
 
         if(first < cluster_last){
-            std::unique_heap_array<char> cluster(cluster_size);
 
-            if(read_sectors(cluster_lba(cluster_number), fat_bs->sectors_per_cluster, cluster.get())){
+            if(read_sectors(cluster_lba(cluster_number), fat_bs->sectors_per_cluster, cluster_buffer.get())){
                 size_t i = 0;
 
                 if(position == 0){
@@ -349,10 +369,10 @@ size_t fat32::fat32_file_system::write(const path& file_path, const char* buffer
                 }
 
                 for(; i < cluster_size && read_bytes < last; ++i, ++read_bytes){
-                    cluster[i] = buffer[position++];
+                    cluster_buffer[i] = buffer[position++];
                 }
 
-                if(!write_sectors(cluster_lba(cluster_number), fat_bs->sectors_per_cluster, cluster.get())){
+                if(!write_sectors(cluster_lba(cluster_number), fat_bs->sectors_per_cluster, cluster_buffer.get())){
                     return std::ERROR_FAILED;
                 }
             } else {
@@ -418,13 +438,14 @@ size_t fat32::fat32_file_system::clear(const path& file_path, size_t count, size
 
     size_t cluster_size = 512 * fat_bs->sectors_per_cluster;
 
+    // Allocate a buffer big enough to read one cluster (possibly several sectors)
+    std::unique_heap_array<char> cluster_buffer(cluster_size);
+
     while(read_bytes < last){
         auto cluster_last = (cluster + 1) * cluster_size;
 
         if(first < cluster_last){
-            std::unique_heap_array<char> cluster(cluster_size);
-
-            if(read_sectors(cluster_lba(cluster_number), fat_bs->sectors_per_cluster, cluster.get())){
+            if(read_sectors(cluster_lba(cluster_number), fat_bs->sectors_per_cluster, cluster_buffer.get())){
                 size_t i = 0;
 
                 if(first_position){
@@ -433,10 +454,10 @@ size_t fat32::fat32_file_system::clear(const path& file_path, size_t count, size
                 }
 
                 for(; i < cluster_size && read_bytes < last; ++i, ++read_bytes){
-                    cluster[i] = 0;
+                    cluster_buffer[i] = 0;
                 }
 
-                if(!write_sectors(cluster_lba(cluster_number), fat_bs->sectors_per_cluster, cluster.get())){
+                if(!write_sectors(cluster_lba(cluster_number), fat_bs->sectors_per_cluster, cluster_buffer.get())){
                     return std::ERROR_FAILED;
                 }
             } else {
@@ -618,10 +639,8 @@ size_t fat32::fat32_file_system::mkdir(const path& file_path){
         return std::ERROR_DISK_FULL;
     }
 
-#ifdef THOR_CONFIG_DEBUG_FAT32
-    logging::logf(logging::log_level::TRACE, "fat32: mkdir: free_cluster:%u\n", size_t(cluster));
-    logging::logf(logging::log_level::TRACE, "fat32: mkdir: parent_cluster:%u\n", size_t(parent_cluster));
-#endif
+    verbose_logf(logging::log_level::TRACE, "fat32: mkdir: free_cluster:%u\n", size_t(cluster));
+    verbose_logf(logging::log_level::TRACE, "fat32: mkdir: parent_cluster:%u\n", size_t(parent_cluster));
 
     std::unique_heap_array<cluster_entry> directory_cluster(16 * fat_bs->sectors_per_cluster);
     if(!read_sectors(cluster_lba(parent_cluster), fat_bs->sectors_per_cluster, directory_cluster.get())){
@@ -674,10 +693,8 @@ size_t fat32::fat32_file_system::mkdir(const path& file_path){
         return std::ERROR_FAILED;
     }
 
-#ifdef THOR_CONFIG_DEBUG_FAT32
-    logging::logf(logging::log_level::TRACE, "fat32: mkdir: special entry . -> %u\n", size_t(new_directory_cluster[0].cluster_low));
-    logging::logf(logging::log_level::TRACE, "fat32: mkdir: special entry . -> %u\n", size_t(new_directory_cluster[1].cluster_low));
-#endif
+    verbose_logf(logging::log_level::TRACE, "fat32: mkdir: special entry . -> %u\n", size_t(new_directory_cluster[0].cluster_low));
+    verbose_logf(logging::log_level::TRACE, "fat32: mkdir: special entry . -> %u\n", size_t(new_directory_cluster[1].cluster_low));
 
     return 0;
 }
